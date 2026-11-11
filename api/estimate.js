@@ -13,6 +13,13 @@ Reply with ONLY a JSON object, no other text:
 {"items":[{"name":"short food name","kcal":number,"portion":"assumed portion, e.g. 1 medium (120g)"}],"note":"optional short caveat, or empty"}
 Round kcal to the nearest 5. If there is no food, reply {"items":[],"note":"I couldn't see any food"}.`;
 
+const EX_PROMPT = (kg) => `You estimate calories burned by exercise for a simple UK calorie counter.
+The person weighs about ${kg} kg. Estimate the EXTRA calories burned by what they describe, over and above resting (net, not gross), using typical intensity unless they say otherwise.
+Reply with ONLY a JSON object, no other text:
+{"items":[{"name":"short activity name, e.g. Tennis","kcal":number,"detail":"what you assumed, e.g. 60 min, doubles"}],"note":"optional short caveat, or empty"}
+If they give no time or distance, assume a typical 30-minute session and say so in "detail". Round kcal to the nearest 5.
+If it isn't exercise, reply {"items":[],"note":"That doesn't look like exercise"}.`;
+
 const norm = (s) => String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 
 export default async function handler(req, res) {
@@ -26,11 +33,15 @@ export default async function handler(req, res) {
     return res.status(503).json({ error: "nokey", message: "Estimates aren't set up yet: add ANTHROPIC_API_KEY in Vercel." });
   }
 
-  const { text = "", image = null } = req.body || {};
+  const { text = "", image = null, mode = "food", weightKg = 75 } = req.body || {};
+  const isEx = mode === "exercise";
+  const kg = Math.min(250, Math.max(30, Math.round(+weightKg || 75)));
   const content = [];
   const m = /^data:(image\/[a-z+]+);base64,(.+)$/.exec(image || "");
-  if (m) content.push({ type: "image", source: { type: "base64", media_type: m[1], data: m[2] } });
-  content.push({ type: "text", text: `${PROMPT}\n\nWhat they ate: ${String(text).slice(0, 500) || "(see photo)"}` });
+  if (m && !isEx) content.push({ type: "image", source: { type: "base64", media_type: m[1], data: m[2] } });
+  content.push({ type: "text", text: isEx
+    ? `${EX_PROMPT(kg)}\n\nWhat they did: ${String(text).slice(0, 300)}`
+    : `${PROMPT}\n\nWhat they ate: ${String(text).slice(0, 500) || "(see photo)"}` });
 
   try {
     const r = await fetch("https://api.anthropic.com/v1/messages", {

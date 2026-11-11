@@ -61,6 +61,19 @@
   .ringtxt{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
   .ringtxt .n{font-family:"DM Serif Display",serif;font-size:58px;line-height:1}
   .ringtxt .l{color:var(--muted);margin-top:6px;font-size:15px}
+  .rings{display:flex;align-items:center;justify-content:center;gap:12px;margin:4px 0 20px}
+  .ring{position:relative;flex:none}
+  .ring.lg{width:200px;height:200px}
+  .ring.sm{width:124px;height:124px;cursor:pointer}
+  .ring svg{width:100%;height:100%;transform:rotate(-90deg)}
+  .ring .ringtxt .n{font-size:44px}
+  .ring .ringtxt .n.sm{font-size:28px}
+  .ring .ringtxt .l{margin-top:4px;font-size:14px}
+  .ring .ringtxt .s{font-size:12px;color:var(--muted);margin-top:4px;padding:0 18px;line-height:1.3}
+  .ring.sm .ringtxt .l{font-size:12px;margin-top:2px}
+  .ring.sm .ringtxt .s{font-size:11px;padding:0 10px}
+  .hatchkey{display:inline-block;width:9px;height:9px;border-radius:2px;background:repeating-linear-gradient(45deg,#cfc9be 0 2px,#f1eee8 2px 5px);vertical-align:-1px;margin-right:2px}
+  .est.exc{border-color:var(--accent)}
   .addbar{display:flex;gap:8px;background:#fff;border-radius:16px;padding:6px;box-shadow:0 1px 0 var(--line)}
   .addbar input{border:0;padding:12px 10px}
   .addbar .cam,.addbar .go{border:0;border-radius:12px;width:48px;flex:none;display:grid;place-items:center;cursor:pointer}
@@ -288,8 +301,20 @@ function showGoal(){
   };
 }
 
-/* ---------- today ---------- */
-const eaten = () => (today?.items||[]).reduce((s,i)=>s+(+i.kcal||0),0);
+/* ---------- today: totals ---------- */
+const sum = a => (a||[]).reduce((s,i)=>s+(+i.kcal||0),0);
+const eaten = (d=today) => sum(d.items);
+// Steps your activity level already assumes; only steps above this earn extra calories.
+const STEP_BASE = {1.2:3000, 1.375:5000, 1.55:8000, 1.725:11000};
+function stepBonus(d=today){
+  const steps = +d.steps||0;
+  const base = STEP_BASE[profile.activity] ?? 5000;
+  const covered = (d.exercise||[]).reduce((s,e)=>s+(+e.steps||0),0);   // logged runs/walks already counted
+  const extra = Math.max(0, steps - base - covered);
+  return {steps, base, extra, kcal: Math.round(extra*0.0004*profile.weightKg)};
+}
+const earned = (d=today) => sum(d.exercise) + stepBonus(d).kcal;
+const moveGoal = () => profile.moveGoal || 300;
 
 function recents(){
   const seen = new Map();
@@ -302,47 +327,75 @@ function recents(){
   return [...seen.values()].sort((a,b)=>b.n-a.n).slice(0,8);
 }
 
-function ring(left, target){
-  const r=100, C=2*Math.PI*r, used=Math.min(1, Math.max(0,(target-left)/target));
-  const over = left<0;
-  return `<svg viewBox="0 0 230 230"><circle cx="115" cy="115" r="${r}" fill="none" stroke="${over?"var(--warn-soft)":"#e8e3da"}" stroke-width="16"/>
-    <circle cx="115" cy="115" r="${r}" fill="none" stroke="${over?"var(--warn)":"var(--accent)"}" stroke-width="16" stroke-linecap="round"
-      stroke-dasharray="${C}" stroke-dashoffset="${over?0:C*(1-used)}" style="transition:stroke-dashoffset .5s"/></svg>`;
+/* ---------- rings ---------- */
+function arc(r, len, C, offset, stroke, cap="butt"){
+  if(len<=0.5) return "";
+  return `<circle cx="100" cy="100" r="${r}" fill="none" stroke="${stroke}" stroke-width="16" stroke-linecap="${cap}"
+    stroke-dasharray="${len} ${C}" stroke-dashoffset="${-offset}"/>`;
+}
+function calorieRing(){
+  const t=profile.target, e=earned(), food=eaten(), total=t+e, left=total-food, over=left<0;
+  const r=84, C=2*Math.PI*r;
+  const baseLen = C*t/total, foodLen = Math.min(C, C*food/total);
+  return `<div class="ring lg">
+    <svg viewBox="0 0 200 200">
+      <defs><pattern id="hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <rect width="7" height="7" fill="#f1eee8"/><rect width="3" height="7" fill="#cfc9be"/></pattern></defs>
+      ${arc(r, baseLen, C, 0, "#e8e3da")}
+      ${e>0 ? arc(r, C-baseLen, C, baseLen, "url(#hatch)") : ""}
+      ${arc(r, foodLen, C, 0, over?"var(--warn)":"var(--ink)", foodLen<C?"round":"butt")}
+    </svg>
+    <div class="ringtxt"><div class="n" style="color:${over?"var(--warn)":"var(--ink)"}">${fmt(Math.abs(left))}</div>
+      <div class="l">${over?"over":"left to eat"}</div>
+      <div class="s">${fmt(food)} eaten${e>0?` · <span class="hatchkey"></span>+${fmt(e)} moved`:""}</div></div>
+  </div>`;
+}
+function moveRing(){
+  const e=earned(), g=moveGoal(), sb=stepBonus();
+  const r=84, C=2*Math.PI*r, len=Math.min(C, C*e/g);
+  return `<div class="ring sm" id="movering">
+    <svg viewBox="0 0 200 200">${arc(r, C, C, 0, "var(--accent-soft)")}${arc(r, len, C, 0, "var(--accent)", len<C?"round":"butt")}</svg>
+    <div class="ringtxt"><div class="n sm">${fmt(e)}</div><div class="l">moved</div>
+      <div class="s">${sb.steps?`${fmt(sb.steps)} steps`:`of ${fmt(g)}`}</div></div>
+  </div>`;
 }
 
 function weekHTML(){
-  const out=[]; const t=profile.target;
-  let max = t*1.3;
-  const days=[];
+  const out=[]; const t=profile.target; let max=t*1.3; const days=[];
   for(let i=6;i>=0;i--){ const d=new Date(); d.setDate(d.getDate()-i); const k=dkey(d);
-    const tot=(allDays[k]?.items||[]).reduce((s,x)=>s+(+x.kcal||0),0); days.push([d,k,tot]); max=Math.max(max,tot); }
-  days.forEach(([d,k,tot])=>{
+    const day=allDays[k]||{items:[],exercise:[]}; const tot=eaten(day), allow=t+earned(day);
+    days.push([d,k,tot,allow]); max=Math.max(max,tot); }
+  days.forEach(([d,k,tot,allow])=>{
     const h = tot? Math.max(4, tot/max*100) : 3;
     out.push(`<div class="d"><div class="small ${tot?"":"muted"}" style="font-size:11px">${tot?fmt(tot):""}</div>
-      <div class="bar ${!tot?"empty":tot>t?"over":""}" style="height:${h}%"></div>
+      <div class="bar ${!tot?"empty":tot>allow?"over":""}" style="height:${h}%"></div>
       <div class="lb ${k===dkey()?"today":""}">${d.toLocaleDateString("en-GB",{weekday:"narrow"})}</div></div>`);
   });
   return `<div class="week">${out.join("")}</div>`;
 }
 
+/* ---------- today screen ---------- */
+let mode = "food";
 function showToday(){
-  const target = profile.target, left = target - eaten();
-  const rec = recents();
+  const rec = recents(), sb = stepBonus();
   const items = (today.items||[]).slice().reverse();
+  const ex = (today.exercise||[]).slice().reverse();
+  const isEx = mode==="ex";
   app.innerHTML = `
     <div class="top"><div><h1>Today</h1><div class="muted small">${new Date().toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long"})}</div></div>
       <button class="icon" id="settings" aria-label="Settings"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></button></div>
-    <div class="ringwrap">${ring(left,target)}
-      <div class="ringtxt"><div class="n" style="color:${left<0?"var(--warn)":"var(--ink)"}">${fmt(Math.abs(left))}</div>
-      <div class="l">${left<0?"over today":"calories left"}<br><span class="small">of ${fmt(target)}</span></div></div></div>
+    <div class="rings">${calorieRing()}${moveRing()}</div>
 
+    <div class="seg" id="mode" style="margin-bottom:10px"><button data-v="food" class="${!isEx?"on":""}">Food</button><button data-v="ex" class="${isEx?"on":""}">Exercise</button></div>
     <form class="addbar" id="addf">
-      <button type="button" class="cam" id="cam" aria-label="Photo"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg></button>
-      <input class="grow" type="text" id="food" placeholder="What did you eat?" autocomplete="off" enterkeyhint="go">
+      ${!isEx?`<button type="button" class="cam" id="cam" aria-label="Photo"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg></button>`:""}
+      <input class="grow" type="text" id="food" placeholder="${isEx?"What did you do?":"What did you eat?"}" autocomplete="off" enterkeyhint="go">
       <button class="go" aria-label="Add"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
     </form>
-    <div class="small muted" style="margin:8px 4px 0">Try “banana and a ham sandwich”, “big bowl of pasta”, or “porridge 350” to log an exact number.</div>
-    ${rec.length?`<div class="chips">${rec.map((r,i)=>`<button class="chip" data-r="${i}">${esc(r.name)}<span>${fmt(r.kcal)}</span></button>`).join("")}</div>`:""}
+    <div class="small muted" style="margin:8px 4px 0">${isEx
+      ? "Time, distance or both: “cycle 8km”, “row 2k”, “run 10 mins”, “cycle 20km in 45 mins”, “tennis 1 hour”."
+      : "Try “banana and a ham sandwich”, “big bowl of pasta”, or “porridge 350” to log an exact number."}</div>
+    ${!isEx && rec.length?`<div class="chips">${rec.map((r,i)=>`<button class="chip" data-r="${i}">${esc(r.name)}<span>${fmt(r.kcal)}</span></button>`).join("")}</div>`:""}
     <div id="pending">${pendingHTML()}</div>
 
     <h2>Eaten today</h2>
@@ -352,35 +405,86 @@ function showToday(){
       : `<p class="muted center" style="padding:18px 0">Nothing yet. Add your first meal above.</p>`}
     </div>
 
-    <h2>This week</h2>
-    <div class="card">${weekHTML()}<div class="small muted center" style="margin-top:10px">Green is under your ${fmt(target)} target, orange is over.</div></div>
-    ${!store.cloud?`<p class="small muted center" style="margin-top:16px">Your log is saved on this phone.</p>`:""}`;
+    <h2>Movement today</h2>
+    <div class="card" style="padding:4px 18px">
+      <div class="item"><div class="nm"><div>Steps</div><div class="small muted">${sb.steps
+          ? `${fmt(sb.steps)} steps${today.stepsAt?` · updated ${new Date(today.stepsAt).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}`:""}<br>${sb.extra?`${fmt(sb.extra)} above your usual ${fmt(sb.base)}`:`Below your usual ${fmt(sb.base)}, so no extra yet`}`
+          : `Not linked yet`}</div></div>
+        ${sb.steps?`<div class="kc">+${fmt(sb.kcal)}</div>`:`<button class="chip" id="linksteps">Link iPhone</button>`}</div>
+      ${ex.map(e=>`<div class="item"><div class="nm"><div>${esc(e.name)}</div><div class="small muted">${esc(e.detail||"")}${e.src==="ai"?" · estimate":""}</div></div>
+        <div class="kc">+${fmt(e.kcal)}</div><button class="x" data-delex="${e.id}" aria-label="Remove">×</button></div>`).join("")}
+    </div>
 
-  $("#addf").onsubmit = e => { e.preventDefault(); const v=$("#food").value.trim(); if(v) handleText(v); };
-  $("#cam").onclick = () => $("#photo").click();
+    <h2>This week</h2>
+    <div class="card">${weekHTML()}<div class="small muted center" style="margin-top:10px">Green is within your allowance (target plus what you moved), orange is over.</div></div>
+    ${sb.steps?`<p class="small muted center" style="margin-top:12px"><a href="#" id="linksteps2" style="color:inherit">How step syncing works</a></p>`:""}
+    <p class="small muted center" style="margin-top:10px">Your log is saved on this phone.</p>`;
+
+  $("#addf").onsubmit = e => { e.preventDefault(); const v=$("#food").value.trim(); if(!v) return; isEx? handleExercise(v) : handleText(v); };
+  if($("#cam")) $("#cam").onclick = () => $("#photo").click();
   $("#settings").onclick = showSettings;
+  $("#mode").onclick = e => { const b=e.target.closest("button"); if(!b||b.dataset.v===mode) return; mode=b.dataset.v; pending=null; showToday(); $("#food").focus(); };
+  $("#movering").onclick = () => { if(mode!=="ex"){ mode="ex"; pending=null; showToday(); } $("#food").focus(); };
+  [$("#linksteps"),$("#linksteps2")].forEach(b=>{ if(b) b.onclick=e=>{ e.preventDefault(); showStepsHelp(); }; });
   app.querySelectorAll("[data-r]").forEach(b=>b.onclick=()=>{ const r=rec[+b.dataset.r]; addItems([{name:r.name,kcal:r.kcal,src:r.src}]); });
   app.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{ today.items=today.items.filter(i=>i.id!==b.dataset.del); saveToday(); showToday(); });
+  app.querySelectorAll("[data-delex]").forEach(b=>b.onclick=()=>{ today.exercise=today.exercise.filter(i=>i.id!==b.dataset.delex); saveToday(); showToday(); });
   wirePending();
 }
 
 async function addItems(list){
   const now=Date.now();
   list.forEach(x=>today.items.push({id:uid(), name:x.name, kcal:Math.round(+x.kcal||0), t:now, src:x.src||"manual"}));
-  allDays[today.date]=today;
-  pending=null;
-  await saveToday();
-  showToday();
+  pending=null; await saveToday(); showToday();
+}
+async function addExercise(list){
+  const now=Date.now();
+  list.forEach(x=>today.exercise.push({id:uid(), name:x.name, kcal:Math.round(+x.kcal||0), detail:x.detail||x.portion||"", steps:x.steps||0, t:now, src:x.src||"calc"}));
+  pending=null; await saveToday(); showToday();
 }
 function saveToday(){ allDays[today.date]=today; return store.set("day-"+today.date, today); }
 
-/* ---------- AI estimate ---------- */
-function handleText(v){
-  // "porridge 350" or "350 porridge" → exact number, no AI
-  const m = v.match(/^(.*\D)\s+(\d{2,4})\s*(?:k?cals?|kcal)$/i) || v.match(/^(.*\D)\s+(\d{3,4})$/);
-  if(m && m[1].trim()){ addItems([{name:m[1].trim(), kcal:+m[2]}]); return; }
-  estimate({text:v});
+/* ---------- exercise: time and/or distance ---------- */
+// perKm and MET are net of resting calories, per kg of body weight. spk/spm = steps per km / per minute (for walking & running).
+const EX = [
+  {name:"Run",   re:/\b(run|ran|running|jog|jogged|jogging|parkrun)\b/, perKm:0.9, met:9.8, spk:1100, spm:160},
+  {name:"Walk",  re:/\b(walk|walked|walking|hike|hiked|hiking)\b/,       perKm:0.4, met:3.5, spk:1300, spm:110},
+  {name:"Cycle", re:/\b(cycle|cycled|cycling|bike|biked|biking|ride|rode|spin|spinning)\b/, perKm:0.3, met:7},
+  {name:"Row",   re:/\b(row|rowed|rowing|erg)\b/,                         perKm:0.8, met:7},
+  {name:"Swim",  re:/\b(swim|swam|swimming)\b/,                           perKm:3.0, met:7},
+];
+function parseExercise(v){
+  const s=v.toLowerCase(), a=EX.find(x=>x.re.test(s));
+  if(!a) return null;
+  let km=null, min=null, m;
+  if((m=s.match(/(\d+(?:\.\d+)?)\s*(km|kms|kilomet(?:re|er)s?|k|miles?|mi|metres?|meters?|m)(?![a-z])/))){
+    const n=+m[1], u=m[2];
+    if(/^k/.test(u)) km=n; else if(/^mi/.test(u)) km=n*1.609; else if(u==="m" && n<100) min=n; else km=n/1000;
+  }
+  if((m=s.match(/(\d+(?:\.\d+)?)\s*(h|hrs?|hours?)(?![a-z])/))) min=(min||0)+(+m[1])*60;
+  if((m=s.match(/(\d+(?:\.\d+)?)\s*(mins?|minutes?)(?![a-z])/))) min=(min||0)+(+m[1]);
+  if(!km && !min) return {need:true, name:a.name};
+  const kg=profile.weightKg; let kcal;
+  if(a.name==="Cycle" && km && min){
+    const sp=km/(min/60), met= sp<16?4: sp<19?6: sp<22?8: sp<25?10: 12;
+    kcal=(met-1)*kg*min/60;
+  } else if(km) kcal=a.perKm*kg*km;
+  else kcal=(a.met-1)*kg*min/60;
+  const steps = a.spk ? Math.round(km? km*a.spk : min*a.spm) : 0;
+  const detail = [km? (km<1? `${Math.round(km*1000)} m` : `${+km.toFixed(1)} km`) : "", min? `${Math.round(min)} min` : ""].filter(Boolean).join(" · ");
+  return {name:a.name, kcal:Math.round(kcal/5)*5, detail, steps, src:"calc"};
 }
+function handleExercise(v){
+  const r = parseExercise(v);
+  if(r && !r.need){ pending={kind:"ex", items:[r], mult:1}; renderPending(); return; }
+  if(r && r.need){ pending={kind:"ex", items:[], mult:1, error:`Add a time or distance, e.g. “${r.name.toLowerCase()} 5km” or “${r.name.toLowerCase()} 30 mins”.`}; renderPending(); return; }
+  estimate({text:v, kind:"ex"});
+}
+
+/* ---------- AI estimate ---------- */
+const getCode = () => { try{ return localStorage.getItem("sc_access")||""; }catch(e){ return ""; } };
+const setCode = c => { try{ localStorage.setItem("sc_access", c); }catch(e){} };
+const toDataURL = blob => new Promise(r=>{ const f=new FileReader(); f.onload=()=>r(f.result); f.readAsDataURL(blob); });
 
 async function shrink(file){
   try{
@@ -391,31 +495,33 @@ async function shrink(file){
     return await new Promise(r=>c.toBlob(r,"image/jpeg",0.82));
   }catch(e){ return file; }
 }
-
 $("#photo").onchange = async e => {
   const f = e.target.files[0]; e.target.value=""; if(!f) return;
   const blob = await shrink(f);
   estimate({image:blob, text: ($("#food")?.value||"").trim()});
 };
 
-const getCode = () => { try{ return localStorage.getItem("sc_access")||""; }catch(e){ return ""; } };
-const setCode = c => { try{ localStorage.setItem("sc_access", c); }catch(e){} };
-const toDataURL = blob => new Promise(r=>{ const f=new FileReader(); f.onload=()=>r(f.result); f.readAsDataURL(blob); });
+function handleText(v){
+  // "porridge 350" or "porridge 350 kcal" → exact number, no AI
+  const m = v.match(/^(.*\D)\s+(\d{2,4})\s*(?:k?cals?|kcal)$/i) || v.match(/^(.*\D)\s+(\d{3,4})$/);
+  if(m && m[1].trim()){ addItems([{name:m[1].trim(), kcal:+m[2]}]); return; }
+  estimate({text:v});
+}
 
-async function estimate({text, image}){
-  pending = {loading:true, text, image, imgURL: image? URL.createObjectURL(image):null, items:[], mult:1};
+async function estimate({text, image, kind="food"}){
+  pending = {kind, loading:true, text, image, imgURL: image? URL.createObjectURL(image):null, items:[], mult:1};
   renderPending();
   try{
     const res = await fetch("/api/estimate", {method:"POST",
       headers:{"content-type":"application/json","x-access":getCode()},
-      body: JSON.stringify({text, image: image? await toDataURL(image) : null})});
+      body: JSON.stringify({text, mode: kind==="ex"?"exercise":"food", weightKg: Math.round(profile.weightKg), image: image? await toDataURL(image) : null})});
     const j = await res.json().catch(()=>({}));
     if(res.status===403){ pending.loading=false; pending.needCode=true; renderPending(); return; }
     if(!res.ok) throw {message:j.message};
-    pending.items = (j.items||[]).filter(i=>i&&i.name).map(i=>({name:String(i.name), kcal:Math.round(+i.kcal||0), portion:i.portion||"", src:"ai"}));
+    pending.items = (j.items||[]).filter(i=>i&&i.name).map(i=>({name:String(i.name), kcal:Math.round(+i.kcal||0), portion:i.portion||i.detail||"", detail:i.detail||i.portion||"", src:"ai"}));
     pending.note = j.note||"";
     pending.loading=false;
-    if(!pending.items.length) pending.error = pending.note || "Couldn't find any food in that.";
+    if(!pending.items.length) pending.error = pending.note || (kind==="ex"? "Couldn't work out that exercise." : "Couldn't find any food in that.");
   }catch(e){
     pending.loading=false;
     pending.error = (e&&e.message) || "Couldn't get an estimate. Check your connection, or type a number, e.g. “pasta 600”.";
@@ -426,21 +532,22 @@ async function estimate({text, image}){
 
 function pendingHTML(){
   const p = pending; if(!p) return "";
+  const isEx = p.kind==="ex";
   if(p.needCode) return `<div class="card est"><label class="f">Invite code</label>
     <div class="row"><input class="grow" type="text" id="code" autocapitalize="characters" placeholder="Enter your code"><button class="btn" id="codego" style="width:auto;padding:13px 18px">Go</button></div>
     <button class="btn ghost" id="pcancel" style="margin-top:6px">Cancel</button></div>`;
-  if(p.loading) return `<div class="card est">${p.imgURL?`<img class="thumb" src="${p.imgURL}">`:""}<div><span class="spin"></span>Estimating${p.text?` “${esc(p.text)}”`:""}…</div></div>`;
+  if(p.loading) return `<div class="card est">${p.imgURL?`<img class="thumb" src="${p.imgURL}">`:""}<div><span class="spin"></span>${isEx?"Working out":"Estimating"}${p.text?` “${esc(p.text)}”`:""}…</div></div>`;
   const tot = p.items.reduce((s,i)=>s+(+i.kcal||0),0)*p.mult;
-  return `<div class="card est">
+  return `<div class="card est ${isEx?"exc":""}">
     ${p.imgURL?`<img class="thumb" src="${p.imgURL}">`:""}
     ${p.error?`<div class="err" style="margin:0 0 10px">${esc(p.error)}</div>`:""}
-    ${p.items.map((i,n)=>`<div class="li"><div class="nm"><div>${esc(i.name)}</div>${i.portion?`<div class="small muted">${esc(i.portion)}</div>`:""}</div>
+    ${p.items.map((i,n)=>`<div class="li"><div class="nm"><div>${esc(i.name)}</div>${(i.portion||i.detail)?`<div class="small muted">${esc(i.portion||i.detail)}</div>`:""}</div>
       <input type="number" inputmode="numeric" data-k="${n}" value="${i.kcal||""}" placeholder="kcal"><button class="x" data-rm="${n}">×</button></div>`).join("")}
     ${p.items.length?`
-    <div class="row" style="justify-content:space-between;margin-top:10px"><span class="small muted">Portion</span>
-      <div class="seg sm" id="mult">${[[0.5,"½×"],[1,"1×"],[1.5,"1½×"],[2,"2×"]].map(([v,t])=>`<button data-v="${v}" class="${p.mult===v?"on":""}">${t}</button>`).join("")}</div></div>
+    ${!isEx?`<div class="row" style="justify-content:space-between;margin-top:10px"><span class="small muted">Portion</span>
+      <div class="seg sm" id="mult">${[[0.5,"½×"],[1,"1×"],[1.5,"1½×"],[2,"2×"]].map(([v,t])=>`<button data-v="${v}" class="${p.mult===v?"on":""}">${t}</button>`).join("")}</div></div>`:""}
     ${p.note?`<div class="small muted" style="margin-top:10px">${esc(p.note)}</div>`:""}
-    <div class="row" style="margin-top:14px"><button class="btn light grow" id="pcancel">Cancel</button><button class="btn grow" id="padd">Add ${fmt(tot)}</button></div>`
+    <div class="row" style="margin-top:14px"><button class="btn light grow" id="pcancel">Cancel</button><button class="btn grow" id="padd">${isEx?"Add +":"Add "}${fmt(tot)}</button></div>`
     :`<button class="btn light" id="pcancel" style="margin-top:6px">OK</button>`}
   </div>`;
 }
@@ -448,33 +555,64 @@ function renderPending(){ const el=$("#pending"); if(!el) return; el.innerHTML=p
 function wirePending(){
   const p=pending; if(!p||p.loading) return;
   if(p.needCode){ $("#pcancel").onclick=()=>{ pending=null; renderPending(); };
-    $("#codego").onclick=()=>{ const c=$("#code").value.trim(); if(c){ setCode(c); estimate({text:p.text, image:p.image}); } }; return; }
+    $("#codego").onclick=()=>{ const c=$("#code").value.trim(); if(c){ setCode(c); estimate({text:p.text, image:p.image, kind:p.kind}); } }; return; }
+  const isEx=p.kind==="ex";
   app.querySelectorAll(".est input[data-k]").forEach(inp=>inp.oninput=()=>{ p.items[+inp.dataset.k].kcal=+inp.value||0;
-    const tot=p.items.reduce((s,i)=>s+(+i.kcal||0),0)*p.mult; const b=$("#padd"); if(b) b.textContent="Add "+fmt(tot); });
+    const tot=p.items.reduce((s,i)=>s+(+i.kcal||0),0)*p.mult; const b=$("#padd"); if(b) b.textContent=(isEx?"Add +":"Add ")+fmt(tot); });
   app.querySelectorAll(".est [data-rm]").forEach(b=>b.onclick=()=>{ p.items.splice(+b.dataset.rm,1); renderPending(); });
   if($("#mult")) $("#mult").onclick=e=>{ const b=e.target.closest("button"); if(!b) return; p.mult=+b.dataset.v; renderPending(); };
   if($("#pcancel")) $("#pcancel").onclick=()=>{ pending=null; renderPending(); };
   if($("#padd")) $("#padd").onclick=()=>{
-    const list=p.items.filter(i=>+i.kcal>0).map(i=>({name:i.name+(p.mult!==1?` (${p.mult}×)`:""), kcal:i.kcal*p.mult, src:i.src}));
-    if(list.length){ $("#food").value=""; addItems(list); }
+    const list=p.items.filter(i=>+i.kcal>0);
+    if(!list.length) return;
+    $("#food").value="";
+    if(isEx) addExercise(list);
+    else addItems(list.map(i=>({name:i.name+(p.mult!==1?` (${p.mult}×)`:""), kcal:i.kcal*p.mult, src:i.src})));
   };
 }
 
-/* ---------- settings ---------- */
-function showSettings(){
+/* ---------- sheets ---------- */
+function sheet(html){
   const s=document.createElement("div"); s.className="sheet";
-  s.innerHTML=`<div class="card stack">
-    <h1 style="font-size:26px">Settings</h1>
-    <div><label class="f">Daily target (kcal)</label><input type="number" inputmode="numeric" id="tgt" value="${profile.target}"></div>
-    <button class="btn" id="save">Save target</button>
-    <button class="btn light" id="redo">Update my details & goal</button>
-    <button class="btn ghost" id="close">Close</button></div>`;
+  s.innerHTML=`<div class="card stack">${html}</div>`;
   document.body.appendChild(s);
+  s.onclick=e=>{ if(e.target===s) s.remove(); };
+  return s;
+}
+function showSettings(){
+  const s=sheet(`<h1 style="font-size:26px">Settings</h1>
+    <div><label class="f">Daily calorie target (kcal)</label><input type="number" inputmode="numeric" id="tgt" value="${profile.target}"></div>
+    <div><label class="f">Daily movement goal (kcal)</label><input type="number" inputmode="numeric" id="mg" value="${moveGoal()}"></div>
+    <button class="btn" id="save">Save</button>
+    <button class="btn light" id="redo">Update my details & goal</button>
+    <button class="btn light" id="steps">Link iPhone steps</button>
+    <button class="btn ghost" id="close">Close</button>`);
   const close=()=>s.remove();
-  s.onclick=e=>{ if(e.target===s) close(); };
   s.querySelector("#close").onclick=close;
-  s.querySelector("#save").onclick=async()=>{ const v=+s.querySelector("#tgt").value; if(v>=800&&v<=6000){ profile.target=Math.round(v); await store.set("profile",profile); } close(); showToday(); };
+  s.querySelector("#save").onclick=async()=>{
+    const v=+s.querySelector("#tgt").value, g=+s.querySelector("#mg").value;
+    if(v>=800&&v<=6000) profile.target=Math.round(v);
+    if(g>=50&&g<=3000) profile.moveGoal=Math.round(g);
+    await store.set("profile",profile); close(); showToday(); };
   s.querySelector("#redo").onclick=()=>{ close(); draft={...profile}; showIntro(); };
+  s.querySelector("#steps").onclick=()=>{ close(); showStepsHelp(); };
+}
+function showStepsHelp(){
+  const url = location.origin + "/?steps=";
+  const s=sheet(`<h1 style="font-size:26px">Link iPhone steps</h1>
+    <p class="muted small" style="line-height:1.5">Web apps can't read Apple Health directly, so a Shortcut reads your steps and opens this app with them. Use the Shortcut as your home-screen icon and your steps update every time you open it.</p>
+    <ol class="small" style="line-height:1.6;padding-left:20px">
+      <li>Open the <b>Shortcuts</b> app and tap <b>+</b>.</li>
+      <li>Add <b>Find Health Samples</b>. Set Type to <b>Steps</b> and add a filter: <b>Start Date is Today</b>.</li>
+      <li>Add <b>Calculate Statistics</b> and set it to <b>Sum</b>.</li>
+      <li>Add <b>Open URLs</b>. Type the address below, then insert the <b>Statistics Result</b> at the end.</li>
+      <li>Name it <b>Calories</b>. Tap the share button → <b>Add to Home Screen</b>.</li>
+      <li>Run it once and allow it to read Steps.</li>
+    </ol>
+    <div class="row"><input class="grow" type="text" readonly value="${esc(url)}" id="surl" style="font-size:14px"><button class="btn light" id="copy" style="width:auto;padding:13px 16px">Copy</button></div>
+    <button class="btn ghost" id="close">Close</button>`);
+  s.querySelector("#close").onclick=()=>s.remove();
+  s.querySelector("#copy").onclick=async e=>{ try{ await navigator.clipboard.writeText(url); e.target.textContent="Copied"; }catch(_){ s.querySelector("#surl").select(); } };
 }
 
 /* ---------- start ---------- */
@@ -484,11 +622,19 @@ function showSettings(){
   allDays = await store.days();
   const k = dkey();
   today = allDays[k] || {date:k, items:[]};
-  if(!today.items) today.items=[];
-  today.date = k;
+  today.items ||= []; today.exercise ||= []; today.date = k;
+  // Steps arrive from the iPhone Shortcut as ?steps=8423
+  try{
+    const st = new URLSearchParams(location.search).get("steps");
+    if(st!=null){
+      const n = Math.round(parseFloat(String(st).replace(/[^\d.]/g,"")));
+      if(!isNaN(n) && n>=0 && n<200000){ today.steps=n; today.stepsAt=Date.now(); await saveToday(); }
+      history.replaceState(null, "", location.pathname);
+    }
+  }catch(e){}
   if(profile && profile.target) showToday(); else showIntro();
   // roll over at midnight if left open
-  setInterval(()=>{ if(dkey()!==today.date && profile){ today={date:dkey(),items:[]}; pending=null; showToday(); } }, 60000);
+  setInterval(()=>{ if(dkey()!==today.date && profile){ today={date:dkey(),items:[],exercise:[]}; pending=null; showToday(); } }, 60000);
 })();
 </script>
 </body>
