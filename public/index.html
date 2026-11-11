@@ -381,6 +381,27 @@ function showToday(){
   const items = (today.items||[]).slice().reverse();
   const ex = (today.exercise||[]).slice().reverse();
   const isEx = mode==="ex";
+  const FOOD = `
+    <h2>Eaten today</h2>
+    <div class="card" style="padding:4px 18px">
+      ${items.length? items.map(i=>`<div class="item"><div class="nm"><div>${esc(i.name)}</div><div class="small muted">${new Date(i.t).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}${i.src==="ai"?" · estimate":""}</div></div>
+        <div class="kc">${fmt(i.kcal)}</div><button class="x" data-del="${i.id}" aria-label="Remove">×</button></div>`).join("")
+      : `<p class="muted center" style="padding:18px 0">Nothing yet. Add your first meal above.</p>`}
+    </div>
+
+`;
+  const MOVE = `
+    <h2>Movement today</h2>
+    <div class="card" style="padding:4px 18px">
+      <div class="item"><div class="nm"><div>Steps</div><div class="small muted">${sb.steps
+          ? `${fmt(sb.steps)} steps${today.stepsAt?` · updated ${new Date(today.stepsAt).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}`:""}<br>${sb.extra?`${fmt(sb.extra)} above your usual ${fmt(sb.base)}`:`Below your usual ${fmt(sb.base)}, so no extra yet`}`
+          : `Not linked yet`}</div></div>
+        ${sb.steps?`<div class="kc">+${fmt(sb.kcal)}</div>`:`<button class="chip" id="linksteps">Link iPhone</button>`}</div>
+      ${ex.map(e=>`<div class="item"><div class="nm"><div>${esc(e.name)}</div><div class="small muted">${esc(e.detail||"")}${e.src==="ai"?" · estimate":""}</div></div>
+        <div class="kc">+${fmt(e.kcal)}</div><button class="x" data-delex="${e.id}" aria-label="Remove">×</button></div>`).join("")}
+    </div>
+
+`;
   app.innerHTML = `
     <div class="top"><div><h1>Today</h1><div class="muted small">${new Date().toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long"})}</div></div>
       <button class="icon" id="settings" aria-label="Settings"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></button></div>
@@ -398,23 +419,7 @@ function showToday(){
     ${!isEx && rec.length?`<div class="chips">${rec.map((r,i)=>`<button class="chip" data-r="${i}">${esc(r.name)}<span>${fmt(r.kcal)}</span></button>`).join("")}</div>`:""}
     <div id="pending">${pendingHTML()}</div>
 
-    <h2>Eaten today</h2>
-    <div class="card" style="padding:4px 18px">
-      ${items.length? items.map(i=>`<div class="item"><div class="nm"><div>${esc(i.name)}</div><div class="small muted">${new Date(i.t).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}${i.src==="ai"?" · estimate":""}</div></div>
-        <div class="kc">${fmt(i.kcal)}</div><button class="x" data-del="${i.id}" aria-label="Remove">×</button></div>`).join("")
-      : `<p class="muted center" style="padding:18px 0">Nothing yet. Add your first meal above.</p>`}
-    </div>
-
-    <h2>Movement today</h2>
-    <div class="card" style="padding:4px 18px">
-      <div class="item"><div class="nm"><div>Steps</div><div class="small muted">${sb.steps
-          ? `${fmt(sb.steps)} steps${today.stepsAt?` · updated ${new Date(today.stepsAt).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}`:""}<br>${sb.extra?`${fmt(sb.extra)} above your usual ${fmt(sb.base)}`:`Below your usual ${fmt(sb.base)}, so no extra yet`}`
-          : `Not linked yet`}</div></div>
-        ${sb.steps?`<div class="kc">+${fmt(sb.kcal)}</div>`:`<button class="chip" id="linksteps">Link iPhone</button>`}</div>
-      ${ex.map(e=>`<div class="item"><div class="nm"><div>${esc(e.name)}</div><div class="small muted">${esc(e.detail||"")}${e.src==="ai"?" · estimate":""}</div></div>
-        <div class="kc">+${fmt(e.kcal)}</div><button class="x" data-delex="${e.id}" aria-label="Remove">×</button></div>`).join("")}
-    </div>
-
+    ${isEx ? MOVE + FOOD : FOOD + MOVE}
     <h2>This week</h2>
     <div class="card">${weekHTML()}<div class="small muted center" style="margin-top:10px">Green is within your allowance (target plus what you moved), orange is over.</div></div>
     ${sb.steps?`<p class="small muted center" style="margin-top:12px"><a href="#" id="linksteps2" style="color:inherit">How step syncing works</a></p>`:""}
@@ -423,8 +428,8 @@ function showToday(){
   $("#addf").onsubmit = e => { e.preventDefault(); const v=$("#food").value.trim(); if(!v) return; isEx? handleExercise(v) : handleText(v); };
   if($("#cam")) $("#cam").onclick = () => $("#photo").click();
   $("#settings").onclick = showSettings;
-  $("#mode").onclick = e => { const b=e.target.closest("button"); if(!b||b.dataset.v===mode) return; mode=b.dataset.v; pending=null; showToday(); $("#food").focus(); };
-  $("#movering").onclick = () => { if(mode!=="ex"){ mode="ex"; pending=null; showToday(); } $("#food").focus(); };
+  $("#mode").onclick = e => { const b=e.target.closest("button"); if(!b||b.dataset.v===mode) return; mode=b.dataset.v; pending=null; showToday(); };
+  $("#movering").onclick = () => { if(mode!=="ex"){ mode="ex"; pending=null; showToday(); } };
   [$("#linksteps"),$("#linksteps2")].forEach(b=>{ if(b) b.onclick=e=>{ e.preventDefault(); showStepsHelp(); }; });
   app.querySelectorAll("[data-r]").forEach(b=>b.onclick=()=>{ const r=rec[+b.dataset.r]; addItems([{name:r.name,kcal:r.kcal,src:r.src}]); });
   app.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{ today.items=today.items.filter(i=>i.id!==b.dataset.del); saveToday(); showToday(); });
