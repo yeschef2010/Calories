@@ -73,6 +73,11 @@
   .ring.sm .ringtxt .l{font-size:12px;margin-top:2px}
   .ring.sm .ringtxt .s{font-size:11px;padding:0 10px}
   .hatchkey{display:inline-block;width:9px;height:9px;border-radius:2px;background:repeating-linear-gradient(45deg,#cfc9be 0 2px,#f1eee8 2px 5px);vertical-align:-1px;margin-right:2px}
+  .sumline{text-align:center;margin:-6px 0 18px;line-height:1.35}
+  .sumline .eq{font-size:17px}
+  .sumline .vs{font-size:14px;margin-top:2px}
+  .sumline.good{color:var(--accent)}
+  .sumline.bad{color:#c0392b}
   .est.exc{border-color:var(--accent)}
   .addbar{display:flex;gap:8px;background:#fff;border-radius:16px;padding:6px;box-shadow:0 1px 0 var(--line)}
   .addbar input{border:0;padding:12px 10px}
@@ -349,8 +354,14 @@ function calorieRing(){
     </svg>
     <div class="ringtxt"><div class="n" style="color:${over?"var(--warn)":"var(--ink)"}">${fmt(Math.abs(left))}</div>
       <div class="l">${over?"over":"left to eat"}</div>
-      <div class="s">${fmt(food)} eaten${e>0?` · <span class="hatchkey"></span>+${fmt(e)} moved`:""}</div></div>
+      <div class="s">${fmt(food)} eaten</div>${e>0?`<div class="s" style="margin-top:1px"><span class="hatchkey"></span>+${fmt(e)} moved</div>`:""}</div>
   </div>`;
+}
+function sumLine(){
+  const t=profile.target, e=earned(), food=eaten(), net=food-e, diff=t-net, ok=diff>=0;
+  return `<div class="sumline ${ok?"good":"bad"}">
+    <div class="eq">${fmt(food)} eaten − ${fmt(e)} moved = <b>${fmt(net)}</b></div>
+    <div class="vs">Today's goal ${fmt(t)} · ${ok?`${fmt(diff)} to spare`:`${fmt(-diff)} over`}</div></div>`;
 }
 function moveRing(){
   const e=earned(), g=moveGoal(), sb=stepBonus();
@@ -408,6 +419,7 @@ function showToday(){
     <div class="top"><div><h1>Today</h1><div class="muted small">${new Date().toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long"})}</div></div>
       <button class="icon" id="settings" aria-label="Settings"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></button></div>
     <div class="rings">${calorieRing()}${moveRing()}</div>
+    ${sumLine()}
 
     <div class="seg" id="mode" style="margin-bottom:10px"><button data-v="food" class="${!isEx?"on":""}">Food</button><button data-v="ex" class="${isEx?"on":""}">Exercise</button></div>
     <form class="addbar" id="addf">
