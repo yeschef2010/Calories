@@ -23,6 +23,12 @@ To stop strangers using your API credit, add `CALORIES_INVITE_CODE` in Vercel (o
 
 Home-screen web apps keep their own storage, separate from Safari, so the Shortcut sends steps to `api/steps` and the app collects them when you open it.
 
+### Weight and the weekly check-in
+
+Log weight in the app (**+ Weight**) or add it to the Shortcut (instructions in the app). Once there are 3+ weigh-ins over 2+ weeks and food is logged on most days, a weekly check-in compares the real weight trend with logged intake and suggests a new target (never more than 200 kcal change at a time, never below 1,200/1,500). You choose whether to accept it.
+
+**Settings → Exercise calories to count** (100 / 75 / 50%) scales calories earned from exercise and steps.
+
 ## How it works
 
 - `public/index.html` is the whole app. Your details and food log are saved on your phone (browser storage).
