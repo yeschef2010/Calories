@@ -85,6 +85,8 @@
   .chip span{color:var(--muted);margin-left:4px}
   .item{display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid var(--line)}
   .item:last-child{border:0}
+  .item.ed{cursor:pointer}
+  .item.ed:active{opacity:.6}
   .item .nm{flex:1;min-width:0}
   .item .nm div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .item .kc{font-weight:700}
@@ -384,10 +386,10 @@ function showToday(){
   const FOOD = `
     <h2>Eaten today</h2>
     <div class="card" style="padding:4px 18px">
-      ${items.length? items.map(i=>`<div class="item"><div class="nm"><div>${esc(i.name)}</div><div class="small muted">${new Date(i.t).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}${i.src==="ai"?" · estimate":""}</div></div>
+      ${items.length? items.map(i=>`<div class="item ed" data-edit="f:${i.id}"><div class="nm"><div>${esc(i.name)}</div><div class="small muted">${new Date(i.t).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}${i.src==="ai"?" · estimate":""}</div></div>
         <div class="kc">${fmt(i.kcal)}</div><button class="x" data-del="${i.id}" aria-label="Remove">×</button></div>`).join("")
       : `<p class="muted center" style="padding:18px 0">Nothing yet. Add your first meal above.</p>`}
-    </div>
+    </div>${items.length?`<div class="small muted" style="margin:6px 4px 0">Tap an item to change it.</div>`:""}
 
 `;
   const MOVE = `
@@ -397,9 +399,9 @@ function showToday(){
           ? `${fmt(sb.steps)} steps${today.stepsAt?` · updated ${new Date(today.stepsAt).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}`:""}<br>${sb.extra?`${fmt(sb.extra)} above your usual ${fmt(sb.base)}`:`Below your usual ${fmt(sb.base)}, so no extra yet`}`
           : `Not linked yet`}</div></div>
         ${sb.steps?`<div class="kc">+${fmt(sb.kcal)}</div>`:`<button class="chip" id="linksteps">Link iPhone</button>`}</div>
-      ${ex.map(e=>`<div class="item"><div class="nm"><div>${esc(e.name)}</div><div class="small muted">${esc(e.detail||"")}${e.src==="ai"?" · estimate":""}</div></div>
+      ${ex.map(e=>`<div class="item ed" data-edit="e:${e.id}"><div class="nm"><div>${esc(e.name)}</div><div class="small muted">${esc(e.detail||"")}${e.src==="ai"?" · estimate":""}</div></div>
         <div class="kc">+${fmt(e.kcal)}</div><button class="x" data-delex="${e.id}" aria-label="Remove">×</button></div>`).join("")}
-    </div>
+    </div>${ex.length?`<div class="small muted" style="margin:6px 4px 0">Tap an item to change it.</div>`:""}
 
 `;
   app.innerHTML = `
@@ -433,6 +435,7 @@ function showToday(){
   [$("#linksteps"),$("#linksteps2")].forEach(b=>{ if(b) b.onclick=e=>{ e.preventDefault(); showStepsHelp(); }; });
   app.querySelectorAll("[data-r]").forEach(b=>b.onclick=()=>{ const r=rec[+b.dataset.r]; addItems([{name:r.name,kcal:r.kcal,src:r.src}]); });
   app.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{ today.items=today.items.filter(i=>i.id!==b.dataset.del); saveToday(); showToday(); });
+  app.querySelectorAll("[data-edit]").forEach(row=>row.onclick=e=>{ if(e.target.closest(".x")) return; const [k,id]=row.dataset.edit.split(":"); editItem(k==="e", id); });
   app.querySelectorAll("[data-delex]").forEach(b=>b.onclick=()=>{ today.exercise=today.exercise.filter(i=>i.id!==b.dataset.delex); saveToday(); showToday(); });
   wirePending();
 }
@@ -573,6 +576,31 @@ function wirePending(){
     $("#food").value="";
     if(isEx) addExercise(list);
     else addItems(list.map(i=>({name:i.name+(p.mult!==1?` (${p.mult}×)`:""), kcal:i.kcal*p.mult, src:i.src})));
+  };
+}
+
+function editItem(isEx, id){
+  const list = isEx ? today.exercise : today.items;
+  const it = list.find(x=>x.id===id); if(!it) return;
+  const s=sheet(`<h1 style="font-size:26px">Edit ${isEx?"exercise":"food"}</h1>
+    <div><label class="f">Name</label><input type="text" id="en" value="${esc(it.name)}"></div>
+    ${isEx?`<div><label class="f">Details <span class="muted small">(optional)</span></label><input type="text" id="ed" value="${esc(it.detail||"")}" placeholder="e.g. 8 km · 30 min"></div>`:""}
+    <div><label class="f">Calories ${isEx?"burned":""}</label><input type="number" inputmode="numeric" id="ek" value="${Math.round(+it.kcal||0)}"></div>
+    ${!isEx?`<div><label class="f">Portion</label><div class="seg sm" id="em">${[[0.5,"½×"],[1.5,"1½×"],[2,"2×"]].map(([v,t])=>`<button data-v="${v}">${t}</button>`).join("")}</div></div>`:""}
+    <button class="btn" id="esave">Save</button>
+    <div class="row"><button class="btn light grow" id="ecancel">Cancel</button><button class="btn light grow" id="edel" style="color:var(--warn);background:var(--warn-soft)">Delete</button></div>`);
+  const close=()=>s.remove();
+  if(s.querySelector("#em")) s.querySelector("#em").onclick=e=>{ const b=e.target.closest("button"); if(!b) return;
+    const k=s.querySelector("#ek"); k.value=Math.round((+k.value||0)*(+b.dataset.v)); };
+  s.querySelector("#ecancel").onclick=close;
+  s.querySelector("#edel").onclick=async()=>{ list.splice(list.indexOf(it),1); close(); await saveToday(); showToday(); };
+  s.querySelector("#esave").onclick=async()=>{
+    const name=s.querySelector("#en").value.trim(), kcal=Math.round(+s.querySelector("#ek").value);
+    if(!name || !(kcal>=0)) return;
+    if(kcal!==Math.round(+it.kcal||0)) it.src="manual";
+    it.name=name; it.kcal=kcal;
+    if(isEx){ const d=s.querySelector("#ed").value.trim(); if(d!==(it.detail||"")){ it.detail=d; } }
+    close(); await saveToday(); showToday();
   };
 }
 
