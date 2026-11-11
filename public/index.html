@@ -104,7 +104,7 @@
   .week .lb{font-size:12px;color:var(--muted)}
   .week .lb.today{color:var(--ink);font-weight:700}
   .sheet{position:fixed;inset:0;background:rgba(20,25,22,.35);display:flex;align-items:flex-end;justify-content:center;z-index:9}
-  .sheet .card{width:100%;max-width:460px;border-radius:22px 22px 0 0;padding:22px 18px calc(env(safe-area-inset-bottom) + 22px)}
+  .sheet .card{width:100%;max-width:460px;max-height:92vh;overflow-y:auto;-webkit-overflow-scrolling:touch;border-radius:22px 22px 0 0;padding:22px 18px calc(env(safe-area-inset-bottom) + 22px)}
   .err{background:var(--warn-soft);color:var(--warn);padding:10px 12px;border-radius:10px;font-size:14px;margin-top:10px}
   .center{text-align:center}
 </style>
@@ -602,22 +602,56 @@ function showSettings(){
   s.querySelector("#redo").onclick=()=>{ close(); draft={...profile}; showIntro(); };
   s.querySelector("#steps").onclick=()=>{ close(); showStepsHelp(); };
 }
+function syncCode(){
+  if(!profile.syncCode){
+    const A="ABCDEFGHJKMNPQRSTUVWXYZ23456789"; let c=""; const r=crypto.getRandomValues(new Uint32Array(10));
+    r.forEach(x=>c+=A[x%A.length]); profile.syncCode=c; store.set("profile",profile);
+  }
+  return profile.syncCode;
+}
+let lastSync = null;   // {ok, steps, at} from the last check
+async function pullSteps(){
+  if(!profile || !profile.syncCode) return;
+  try{
+    const r = await fetch(`/api/steps?code=${profile.syncCode}`, {cache:"no-store"});
+    const j = await r.json().catch(()=>({}));
+    lastSync = {ok:r.ok, nodb:j.error==="nodb", steps:j.steps, at:j.at, date:j.date};
+    if(r.ok && j.steps!=null && j.date===today.date && (j.steps!==today.steps || j.at!==today.stepsAt)){
+      today.steps=j.steps; today.stepsAt=j.at; await saveToday();
+      if(!pending && document.getElementById("movering")) showToday();
+    }
+  }catch(e){ lastSync={ok:false}; }
+}
+document.addEventListener("visibilitychange", ()=>{ if(document.visibilityState==="visible") pullSteps(); });
+
 function showStepsHelp(){
-  const url = location.origin + "/?steps=";
+  const url = `${location.origin}/api/steps?code=${syncCode()}&steps=`;
+  const status = () => !lastSync ? "Checking…"
+    : lastSync.nodb ? "Step sync isn't switched on yet: the app needs its database connected in Vercel."
+    : !lastSync.ok ? "Couldn't reach the app's server. Check your connection."
+    : lastSync.steps==null ? "Waiting for the first steps from your Shortcut."
+    : `Last received ${fmt(lastSync.steps)} steps at ${new Date(lastSync.at).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}${lastSync.date!==today.date?" (not today)":""}.`;
   const s=sheet(`<h1 style="font-size:26px">Link iPhone steps</h1>
-    <p class="muted small" style="line-height:1.5">Web apps can't read Apple Health directly, so a Shortcut reads your steps and opens this app with them. Use the Shortcut as your home-screen icon and your steps update every time you open it.</p>
+    <p class="muted small" style="line-height:1.5">A Shortcut reads your steps from Apple Health and sends them to this app. It can run by itself a few times a day, and the app picks up the latest whenever you open it.</p>
+    <div class="err" id="sstat" style="background:var(--accent-soft);color:var(--accent)">${esc(status())}</div>
+    <div><label class="f">Your sync address</label>
+      <div class="row"><input class="grow" type="text" readonly value="${esc(url)}" id="surl" style="font-size:13px"><button class="btn light" id="copy" style="width:auto;padding:13px 16px">Copy</button></div></div>
     <ol class="small" style="line-height:1.6;padding-left:20px">
-      <li>Open the <b>Shortcuts</b> app and tap <b>+</b>.</li>
-      <li>Add <b>Find Health Samples</b>. Set Type to <b>Steps</b> and add a filter: <b>Start Date is Today</b>.</li>
+      <li>Tap <b>Copy</b> above.</li>
+      <li>Open the <b>Shortcuts</b> app, tap <b>+</b> and name it <b>Send steps</b>.</li>
+      <li>Add <b>Find Health Samples</b>. Set the type to <b>Steps</b> and add the filter <b>Start Date is Today</b>.</li>
       <li>Add <b>Calculate Statistics</b> and set it to <b>Sum</b>.</li>
-      <li>Add <b>Open URLs</b>. Type the address below, then insert the <b>Statistics Result</b> at the end.</li>
-      <li>Name it <b>Calories</b>. Tap the share button → <b>Add to Home Screen</b>.</li>
-      <li>Run it once and allow it to read Steps.</li>
+      <li>Add <b>Get Contents of URL</b>. Paste the address, then put the cursor at the very end and insert <b>Statistics Result</b> (tap the variable above the keyboard).</li>
+      <li>Tap ▶ to run it once. Allow it to read <b>Steps</b> and to connect to the site. It should say “Saved … steps”.</li>
+      <li>To make it automatic: <b>Automation</b> tab → <b>+</b> → <b>Time of Day</b>, pick a time, choose <b>Run Immediately</b>, then pick <b>Send steps</b>. Make a few, e.g. noon, 5pm and 9pm.</li>
     </ol>
-    <div class="row"><input class="grow" type="text" readonly value="${esc(url)}" id="surl" style="font-size:14px"><button class="btn light" id="copy" style="width:auto;padding:13px 16px">Copy</button></div>
+    <button class="btn light" id="check">Check now</button>
     <button class="btn ghost" id="close">Close</button>`);
-  s.querySelector("#close").onclick=()=>s.remove();
-  s.querySelector("#copy").onclick=async e=>{ try{ await navigator.clipboard.writeText(url); e.target.textContent="Copied"; }catch(_){ s.querySelector("#surl").select(); } };
+  s.querySelector("#close").onclick=()=>{ s.remove(); showToday(); };
+  s.querySelector("#copy").onclick=async e=>{ try{ await navigator.clipboard.writeText(url); e.target.textContent="Copied"; }catch(_){ const i=s.querySelector("#surl"); i.focus(); i.select(); } };
+  const refresh=async()=>{ s.querySelector("#sstat").textContent="Checking…"; await pullSteps(); s.querySelector("#sstat").textContent=status(); };
+  s.querySelector("#check").onclick=refresh;
+  refresh();
 }
 
 /* ---------- start ---------- */
@@ -637,7 +671,7 @@ function showStepsHelp(){
       history.replaceState(null, "", location.pathname);
     }
   }catch(e){}
-  if(profile && profile.target) showToday(); else showIntro();
+  if(profile && profile.target){ showToday(); pullSteps(); } else showIntro();
   // roll over at midnight if left open
   setInterval(()=>{ if(dkey()!==today.date && profile){ today={date:dkey(),items:[],exercise:[]}; pending=null; showToday(); } }, 60000);
 })();
