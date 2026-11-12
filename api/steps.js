@@ -1,6 +1,7 @@
 // Step sync between the iPhone Shortcut and the app.
 // The Shortcut calls  /api/steps?code=ABC123&steps=8423   (saves today's steps)
 // The Shortcut can also send /api/steps?code=ABC123&weight=88.4 (latest weight, kg)
+//                     /api/steps?code=ABC123&active=540   (Apple Watch active calories today)
 // The app calls       /api/steps?code=ABC123              (reads them back)
 // The code is a random sync code the app makes for each phone. Needs an Upstash Redis database
 // connected to this project in Vercel (Storage tab) — the same kind Yes Chef uses.
@@ -27,7 +28,15 @@ export default async function handler(req, res) {
   const key = `cal:steps:${code}`;
 
   try {
-    const wkey = `cal:weight:${code}`;
+    const wkey = `cal:weight:${code}`, akey = `cal:active:${code}`;
+    if (q.active != null && q.active !== "") {
+      const kcal = Math.round(parseFloat(String(q.active).replace(/[^\d.]/g, "")));
+      if (isNaN(kcal) || kcal < 0 || kcal > 10000) return res.status(400).json({ error: "active", message: "Active calories should be a number." });
+      const rec = { kcal, at: Date.now(), date: londonDate() };
+      const r = await redis(["SET", akey, JSON.stringify(rec), "EX", 259200]);
+      if (r.missing) return res.status(503).json({ error: "nodb", message: "Step sync isn't set up: connect an Upstash Redis database in Vercel." });
+      if ((q.steps == null || q.steps === "") && (q.weight == null || q.weight === "")) return res.status(200).json({ ok: true, active: rec, message: `Saved ${kcal} active calories` });
+    }
     if (q.weight != null && q.weight !== "") {
       const kg = Math.round(parseFloat(String(q.weight).replace(",", ".").replace(/[^\d.]/g, "")) * 10) / 10;
       if (isNaN(kg) || kg < 20 || kg > 700) return res.status(400).json({ error: "weight", message: "Weight should be a number." });
@@ -47,10 +56,10 @@ export default async function handler(req, res) {
       if (r.missing) return res.status(503).json({ error: "nodb", message: "Step sync isn't set up: connect an Upstash Redis database in Vercel." });
       return res.status(200).json({ ok: true, ...rec, message: `Saved ${n.toLocaleString("en-GB")} steps` });
     }
-    const r = await redis(["MGET", key, wkey]);
+    const r = await redis(["MGET", key, wkey, akey]);
     if (r.missing) return res.status(503).json({ error: "nodb" });
-    const [st, wt] = r.result || [];
-    return res.status(200).json({ ...(st ? JSON.parse(st) : { steps: null }), weight: wt ? JSON.parse(wt) : null });
+    const [st, wt, at] = r.result || [];
+    return res.status(200).json({ ...(st ? JSON.parse(st) : { steps: null }), weight: wt ? JSON.parse(wt) : null, active: at ? JSON.parse(at) : null });
   } catch (e) {
     console.error("[calories steps]", e);
     return res.status(500).json({ error: "fail" });

@@ -81,6 +81,8 @@
   .checkin{margin:0 0 16px;border:2px solid var(--accent)}
   .checkin .ct{font-size:13px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);margin-bottom:8px}
   .checkin p{line-height:1.45;margin-bottom:10px}
+  .chk{display:flex;gap:8px;align-items:flex-start;margin-top:12px;font-size:15px;line-height:1.35}
+  .chk input{width:20px;height:20px;margin-top:1px;accent-color:var(--accent);flex:none}
   .est.exc{border-color:var(--accent)}
   .addbar{display:flex;gap:8px;background:#fff;border-radius:16px;padding:6px;box-shadow:0 1px 0 var(--line)}
   .addbar input{border:0;padding:12px 10px}
@@ -324,7 +326,13 @@ function stepBonus(d=today){
   return {steps, base, extra, kcal: Math.round(extra*0.0004*profile.weightKg)};
 }
 const exPct = () => profile.exPct ?? 100;   // share of exercise + step calories that count
-const earned = (d=today) => Math.round((sum(d.exercise) + stepBonus(d).kcal) * exPct()/100);
+// With Apple Watch data for a day, its measured active calories replace the step estimate.
+// Typed exercise then only adds on top if it wasn't recorded on the Watch.
+const hasWatch = d => !!profile.watch && !!d && d.active != null;
+const rawEarned = d => hasWatch(d)
+  ? (+d.active||0) + sum((d.exercise||[]).filter(e=>!e.onWatch))
+  : sum(d.exercise) + stepBonus(d).kcal;
+const earned = (d=today) => Math.round(rawEarned(d) * exPct()/100);
 const moveGoal = () => profile.moveGoal || 300;
 
 /* ---------- weight log & weekly check-in ---------- */
@@ -455,7 +463,7 @@ function moveRing(){
   return `<div class="ring sm" id="movering">
     <svg viewBox="0 0 200 200">${arc(r, C, C, 0, "var(--accent-soft)")}${arc(r, len, C, 0, "var(--accent)", len<C?"round":"butt")}</svg>
     <div class="ringtxt"><div class="n sm">${fmt(e)}</div><div class="l">moved</div>
-      <div class="s">${sb.steps?`${fmt(sb.steps)} steps`:`of ${fmt(g)}`}</div></div>
+      <div class="s">${hasWatch(today)?"Apple Watch":sb.steps?`${fmt(sb.steps)} steps`:`of ${fmt(g)}`}</div></div>
   </div>`;
 }
 
@@ -492,12 +500,14 @@ function showToday(){
   const MOVE = `
     <h2>Movement today</h2>
     <div class="card" style="padding:4px 18px">
-      <div class="item"><div class="nm"><div>Steps</div><div class="small muted">${sb.steps
+      ${hasWatch(today) ? `<div class="item"><div class="nm"><div>Apple Watch</div><div class="small muted">Active calories${today.activeAt?` · updated ${new Date(today.activeAt).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}`:""}${sb.steps?`<br>${fmt(sb.steps)} steps`:""}</div></div><div class="kc">+${fmt(today.active)}</div></div>`
+        : profile.watch ? `<div class="item"><div class="nm"><div>Apple Watch</div><div class="small muted">Waiting for today's calories from your Watch${sb.steps?`<br>Using ${fmt(sb.steps)} steps until then`:""}</div></div><button class="chip" id="linksteps">Set up</button></div>`
+        : `<div class="item"><div class="nm"><div>Steps</div><div class="small muted">${sb.steps
           ? `${fmt(sb.steps)} steps${today.stepsAt?` · updated ${new Date(today.stepsAt).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}`:""}<br>${sb.extra?`${fmt(sb.extra)} above your usual ${fmt(sb.base)}`:`Below your usual ${fmt(sb.base)}, so no extra yet`}`
           : `Not linked yet`}</div></div>
-        ${sb.steps?`<div class="kc">+${fmt(sb.kcal)}</div>`:`<button class="chip" id="linksteps">Link iPhone</button>`}</div>
-      ${ex.map(e=>`<div class="item ed" data-edit="e:${e.id}"><div class="nm"><div>${esc(e.name)}</div><div class="small muted">${esc(e.detail||"")}${e.src==="ai"?" · estimate":""}</div></div>
-        <div class="kc">+${fmt(e.kcal)}</div><button class="x" data-delex="${e.id}" aria-label="Remove">×</button></div>`).join("")}
+        ${sb.steps?`<div class="kc">+${fmt(sb.kcal)}</div>`:`<button class="chip" id="linksteps">Link iPhone</button>`}</div>`}
+      ${ex.map(e=>`<div class="item ed" data-edit="e:${e.id}"><div class="nm"><div>${esc(e.name)}</div><div class="small muted">${esc(e.detail||"")}${e.src==="ai"?" · estimate":""}${e.onWatch&&hasWatch(today)?" · included in Watch total":""}</div></div>
+        <div class="kc" style="${e.onWatch&&hasWatch(today)?"opacity:.4":""}">+${fmt(e.kcal)}</div><button class="x" data-delex="${e.id}" aria-label="Remove">×</button></div>`).join("")}
     </div>${ex.length?`<div class="small muted" style="margin:6px 4px 0">Tap an item to change it.</div>`:""}${exPct()<100?`<div class="small muted" style="margin:4px 4px 0">Counting ${exPct()}% of these towards your allowance (Settings).</div>`:""}
 
 `;
@@ -551,7 +561,7 @@ async function addItems(list){
 }
 async function addExercise(list){
   const now=Date.now();
-  list.forEach(x=>today.exercise.push({id:uid(), name:x.name, kcal:Math.round(+x.kcal||0), detail:x.detail||x.portion||"", steps:x.steps||0, t:now, src:x.src||"calc"}));
+  list.forEach(x=>today.exercise.push({id:uid(), name:x.name, kcal:Math.round(+x.kcal||0), detail:x.detail||x.portion||"", steps:x.steps||0, onWatch:!!x.onWatch, t:now, src:x.src||"calc"}));
   pending=null; await saveToday(); showToday();
 }
 function saveToday(){ allDays[today.date]=today; return store.set("day-"+today.date, today); }
@@ -659,6 +669,7 @@ function pendingHTML(){
     ${!isEx?`<div class="row" style="justify-content:space-between;margin-top:10px"><span class="small muted">Portion</span>
       <div class="seg sm" id="mult">${[[0.5,"½×"],[1,"1×"],[1.5,"1½×"],[2,"2×"]].map(([v,t])=>`<button data-v="${v}" class="${p.mult===v?"on":""}">${t}</button>`).join("")}</div></div>`:""}
     ${p.note?`<div class="small muted" style="margin-top:10px">${esc(p.note)}</div>`:""}
+    ${isEx && profile.watch?`<label class="chk"><input type="checkbox" id="onw" ${p.onWatch!==false?"checked":""}> Also recorded on my Apple Watch <span class="muted small">(so it isn't counted twice)</span></label>`:""}
     <div class="row" style="margin-top:14px"><button class="btn light grow" id="pcancel">Cancel</button><button class="btn grow" id="padd">${isEx?"Add +":"Add "}${fmt(tot)}</button></div>`
     :`<button class="btn light" id="pcancel" style="margin-top:6px">OK</button>`}
   </div>`;
@@ -674,11 +685,12 @@ function wirePending(){
   app.querySelectorAll(".est [data-rm]").forEach(b=>b.onclick=()=>{ p.items.splice(+b.dataset.rm,1); renderPending(); });
   if($("#mult")) $("#mult").onclick=e=>{ const b=e.target.closest("button"); if(!b) return; p.mult=+b.dataset.v; renderPending(); };
   if($("#pcancel")) $("#pcancel").onclick=()=>{ pending=null; renderPending(); };
+  if($("#onw")) $("#onw").onchange=e=>{ p.onWatch=e.target.checked; };
   if($("#padd")) $("#padd").onclick=()=>{
     const list=p.items.filter(i=>+i.kcal>0);
     if(!list.length) return;
     $("#food").value="";
-    if(isEx) addExercise(list);
+    if(isEx){ const ow = profile.watch && (!$("#onw") || $("#onw").checked); addExercise(list.map(i=>({...i, onWatch:ow}))); }
     else addItems(list.map(i=>({name:i.name+(p.mult!==1?` (${p.mult}×)`:""), kcal:i.kcal*p.mult, src:i.src})));
   };
 }
@@ -689,6 +701,7 @@ function editItem(isEx, id){
   const s=sheet(`<h1 style="font-size:26px">Edit ${isEx?"exercise":"food"}</h1>
     <div><label class="f">Name</label><input type="text" id="en" value="${esc(it.name)}"></div>
     ${isEx?`<div><label class="f">Details <span class="muted small">(optional)</span></label><input type="text" id="ed" value="${esc(it.detail||"")}" placeholder="e.g. 8 km · 30 min"></div>`:""}
+    ${isEx && profile.watch?`<label class="chk"><input type="checkbox" id="eow" ${it.onWatch?"checked":""}> Also recorded on my Apple Watch</label>`:""}
     <div><label class="f">Calories ${isEx?"burned":""}</label><input type="number" inputmode="numeric" id="ek" value="${Math.round(+it.kcal||0)}"></div>
     ${!isEx?`<div><label class="f">Portion</label><div class="seg sm" id="em">${[[0.5,"½×"],[1.5,"1½×"],[2,"2×"]].map(([v,t])=>`<button data-v="${v}">${t}</button>`).join("")}</div></div>`:""}
     <button class="btn" id="esave">Save</button>
@@ -703,7 +716,7 @@ function editItem(isEx, id){
     if(!name || !(kcal>=0)) return;
     if(kcal!==Math.round(+it.kcal||0)) it.src="manual";
     it.name=name; it.kcal=kcal;
-    if(isEx){ const d=s.querySelector("#ed").value.trim(); if(d!==(it.detail||"")){ it.detail=d; } }
+    if(isEx){ const d=s.querySelector("#ed").value.trim(); if(d!==(it.detail||"")){ it.detail=d; } const ow=s.querySelector("#eow"); if(ow) it.onWatch=ow.checked; }
     close(); await saveToday(); showToday();
   };
 }
@@ -720,28 +733,47 @@ function showSettings(){
   const s=sheet(`<h1 style="font-size:26px">Settings</h1>
     <div><label class="f">Daily calorie target (kcal)</label><input type="number" inputmode="numeric" id="tgt" value="${profile.target}"></div>
     <div><label class="f">Daily movement goal (kcal)</label><input type="number" inputmode="numeric" id="mg" value="${moveGoal()}"></div>
+    <div><label class="f">Apple Watch</label>
+      <div class="seg" id="watchsw"><button data-v="0" class="${!profile.watch?"on":""}">Not using</button><button data-v="1" class="${profile.watch?"on":""}">I wear one</button></div>
+      <div class="small muted" style="margin-top:6px" id="watchnote">${profile.watch?"Your Watch's active calories replace the step estimate, so your activity level is set to “Mostly sitting” and the Watch adds everything you move.":"Turn on to use your Watch's measured active calories instead of the step estimate."}</div></div>
     <div><label class="f">Exercise calories to count</label>
       <div class="seg" id="expct">${[100,75,50].map(v=>`<button data-v="${v}" class="${exPct()===v?"on":""}">${v}%</button>`).join("")}</div>
       <div class="small muted" style="margin-top:6px">Calorie-burn estimates tend to run high. Counting 75% gives you a safety margin.</div></div>
     <button class="btn" id="save">Save</button>
     <button class="btn light" id="redo">Update my details & goal</button>
     <button class="btn light" id="wbtn">Log weight</button>
-    <button class="btn light" id="steps">Link iPhone steps & weight</button>
+    <button class="btn light" id="steps">Link iPhone & Apple Watch</button>
     <button class="btn ghost" id="close">Close</button>`);
   const close=()=>s.remove();
   s.querySelector("#close").onclick=close;
   let pct = exPct();
   s.querySelector("#expct").onclick=e=>{ const b=e.target.closest("button"); if(!b) return; pct=+b.dataset.v;
     s.querySelectorAll("#expct button").forEach(x=>x.classList.toggle("on", x===b)); };
+  let watch = !!profile.watch;
+  s.querySelector("#watchsw").onclick=e=>{ const b=e.target.closest("button"); if(!b) return; watch = b.dataset.v==="1";
+    s.querySelectorAll("#watchsw button").forEach(x=>x.classList.toggle("on", x===b));
+    s.querySelector("#watchnote").textContent = watch ? "On save: activity level becomes “Mostly sitting” and your daily target drops to match, because the Watch will add back everything you move." : "On save: your previous activity level and target come back."; };
   s.querySelector("#save").onclick=async()=>{
     profile.exPct = pct;
     const v=+s.querySelector("#tgt").value, g=+s.querySelector("#mg").value;
     if(v>=800&&v<=6000) profile.target=Math.round(v);
+    if(watch !== !!profile.watch) setWatchMode(watch);
     if(g>=50&&g<=3000) profile.moveGoal=Math.round(g);
     await store.set("profile",profile); close(); showToday(); };
   s.querySelector("#redo").onclick=()=>{ close(); draft={...profile}; showIntro(); };
   s.querySelector("#steps").onclick=()=>{ close(); showStepsHelp(); };
   s.querySelector("#wbtn").onclick=()=>{ close(); showWeight(); };
+}
+// Switching to Watch mode: the Watch measures movement, so the base target assumes "mostly sitting".
+// Shift the target by the difference (keeps any check-in adjustments) and remember the old level.
+function setWatchMode(on){
+  const from = profile.activity, to = on ? 1.2 : (profile.prevActivity || 1.375);
+  if(on) profile.prevActivity = from;
+  const shift = calc({...profile, activity:to}).tdee - calc({...profile, activity:from}).tdee;
+  profile.activity = to;
+  const floor = profile.sex==="f" ? 1200 : 1500;
+  profile.target = Math.max(floor, Math.round((profile.target + shift)/10)*10);
+  profile.watch = on;
 }
 function syncCode(){
   if(!profile.syncCode){
@@ -756,7 +788,11 @@ async function pullSteps(){
   try{
     const r = await fetch(`/api/steps?code=${profile.syncCode}`, {cache:"no-store"});
     const j = await r.json().catch(()=>({}));
-    lastSync = {ok:r.ok, nodb:j.error==="nodb", steps:j.steps, at:j.at, date:j.date, weight:j.weight};
+    lastSync = {ok:r.ok, nodb:j.error==="nodb", steps:j.steps, at:j.at, date:j.date, weight:j.weight, active:j.active};
+    if(r.ok && j.active && j.active.date===today.date && (j.active.kcal!==today.active || j.active.at!==today.activeAt)){
+      today.active=j.active.kcal; today.activeAt=j.active.at; await saveToday();
+      if(!pending && document.getElementById("movering")) showToday();
+    }
     if(r.ok && j.weight && j.weight.at && j.weight.at!==profile.lastWeightAt){
       let kg = +j.weight.kg;
       if(kg > profile.weightKg*1.8 && Math.abs(kg/KG_LB - profile.weightKg) < profile.weightKg*0.2) kg = kg/KG_LB;  // Health sent pounds
@@ -773,11 +809,12 @@ document.addEventListener("visibilitychange", ()=>{ if(document.visibilityState=
 function showStepsHelp(){
   const url = `${location.origin}/api/steps?code=${syncCode()}&steps=`;
   const wurl = `${location.origin}/api/steps?code=${syncCode()}&weight=`;
+  const aurl = `${location.origin}/api/steps?code=${syncCode()}&active=`;
   const status = () => !lastSync ? "Checking…"
     : lastSync.nodb ? "Step sync isn't switched on yet: the app needs its database connected in Vercel."
     : !lastSync.ok ? "Couldn't reach the app's server. Check your connection."
     : lastSync.steps==null ? "Waiting for the first steps from your Shortcut."
-    : `${lastSync.weight?`Weight ${kgFmt(lastSync.weight.kg)} received. `:""}Last received ${fmt(lastSync.steps)} steps at ${new Date(lastSync.at).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}${lastSync.date!==today.date?" (not today)":""}.`;
+    : `${lastSync.active&&lastSync.active.date===today.date?`Watch ${fmt(lastSync.active.kcal)} active calories received. `:""}${lastSync.weight?`Weight ${kgFmt(lastSync.weight.kg)} received. `:""}Last received ${fmt(lastSync.steps)} steps at ${new Date(lastSync.at).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}${lastSync.date!==today.date?" (not today)":""}.`;
   const s=sheet(`<h1 style="font-size:26px">Link iPhone steps</h1>
     <p class="muted small" style="line-height:1.5">A Shortcut reads your steps from Apple Health and sends them to this app. It can run by itself a few times a day, and the app picks up the latest whenever you open it.</p>
     <div class="err" id="sstat" style="background:var(--accent-soft);color:var(--accent)">${esc(status())}</div>
@@ -792,6 +829,15 @@ function showStepsHelp(){
       <li>Tap ▶ to run it once. Allow it to read <b>Steps</b> and to connect to the site. It should say “Saved … steps”.</li>
       <li>To make it automatic: <b>Automation</b> tab → <b>+</b> → <b>Time of Day</b>, pick a time, choose <b>Run Immediately</b>, then pick <b>Send steps</b>. Make a few, e.g. noon, 5pm and 9pm.</li>
     </ol>
+    <h2 style="margin-top:6px">Apple Watch calories</h2>
+    <p class="muted small" style="line-height:1.5">Add these to the <b>end of the same Shortcut</b>, then turn on <b>Settings → Apple Watch</b>:</p>
+    <div class="row"><input class="grow" type="text" readonly value="${esc(aurl)}" id="aurl" style="font-size:13px"><button class="btn light" id="acopy" style="width:auto;padding:13px 16px">Copy</button></div>
+    <ol class="small" style="line-height:1.6;padding-left:20px">
+      <li>Add another <b>Find Health Samples</b>: Type <b>Active Energy</b>, filter <b>Start Date is Today</b>, Unit <b>kcal</b>.</li>
+      <li>Add <b>Calculate Statistics</b> → <b>Sum</b>.</li>
+      <li>Add <b>Get Contents of URL</b>, paste the Watch address, then insert the newest <b>Sum</b> at the end.</li>
+      <li>Optional: <b>Automation</b> → <b>+</b> → <b>Apple Watch Workout</b> → <b>Ends</b> → Run Immediately → <b>Send Steps</b>, so it syncs as soon as you finish a workout.</li>
+    </ol>
     <h2 style="margin-top:6px">Weight too (optional)</h2>
     <p class="muted small" style="line-height:1.5">If your scales or you put weight into Apple Health, add these to the <b>end of the same Shortcut</b>:</p>
     <div class="row"><input class="grow" type="text" readonly value="${esc(wurl)}" id="wurl" style="font-size:13px"><button class="btn light" id="wcopy" style="width:auto;padding:13px 16px">Copy</button></div>
@@ -804,6 +850,7 @@ function showStepsHelp(){
     <button class="btn ghost" id="close">Close</button>`);
   s.querySelector("#close").onclick=()=>{ s.remove(); showToday(); };
   s.querySelector("#copy").onclick=async e=>{ try{ await navigator.clipboard.writeText(url); e.target.textContent="Copied"; }catch(_){ const i=s.querySelector("#surl"); i.focus(); i.select(); } };
+  s.querySelector("#acopy").onclick=async e=>{ try{ await navigator.clipboard.writeText(aurl); e.target.textContent="Copied"; }catch(_){ const i=s.querySelector("#aurl"); i.focus(); i.select(); } };
   s.querySelector("#wcopy").onclick=async e=>{ try{ await navigator.clipboard.writeText(wurl); e.target.textContent="Copied"; }catch(_){ const i=s.querySelector("#wurl"); i.focus(); i.select(); } };
   const refresh=async()=>{ s.querySelector("#sstat").textContent="Checking…"; await pullSteps(); s.querySelector("#sstat").textContent=status(); };
   s.querySelector("#check").onclick=refresh;
