@@ -87,6 +87,10 @@
   .fixrow input{flex:1;min-width:0;font-size:15px;padding:11px 12px}
   .fixrow .btn{width:auto;padding:11px 16px;font-size:15px}
   #ereai .spin{width:16px;height:16px;border-width:2px;margin-right:8px}
+  h2.tog{display:flex;align-items:baseline;gap:8px;cursor:pointer;user-select:none;-webkit-tap-highlight-color:transparent;padding:4px 2px}
+  h2.tog .sumc{flex:1;text-align:right;text-transform:none;letter-spacing:0;font-weight:500;font-size:14px;color:var(--muted)}
+  h2.tog .chev{width:16px;text-align:center;color:var(--ink);font-size:14px}
+  .secbody[hidden]{display:none}
   .est.exc{border-color:var(--accent)}
   .addbar{display:flex;gap:8px;background:#fff;border-radius:16px;padding:6px;box-shadow:0 1px 0 var(--line)}
   .addbar input{border:0;padding:12px 10px}
@@ -490,6 +494,12 @@ function weekHTML(){
   return `<div class="week">${out.join("")}</div>`;
 }
 
+/* ---------- collapsible lists ---------- */
+// Your choice per list is remembered; until you choose, the list for the current tab is open and the other is folded.
+let secState = (()=>{ try{ return JSON.parse(localStorage.getItem("sc_sections"))||{}; }catch(e){ return {}; } })();
+const secClosed = k => secState[k]!=null ? secState[k] : (k==="food" ? mode==="ex" : mode!=="ex");
+const secHead = (k, title, summary) => `<h2 class="tog" data-sec="${k}" role="button" aria-expanded="${!secClosed(k)}"><span>${title}</span><span class="sumc">${summary}</span><span class="chev">${secClosed(k)?"▸":"▾"}</span></h2>`;
+
 /* ---------- today screen ---------- */
 let mode = "food";
 function showToday(){
@@ -498,16 +508,19 @@ function showToday(){
   const ex = (today.exercise||[]).slice().reverse();
   const isEx = mode==="ex";
   const FOOD = `
-    <h2>Eaten today</h2>
+    ${secHead("food","Eaten today", items.length?`${items.length} item${items.length===1?"":"s"} · ${fmt(eaten())}`:"none yet")}
+    <div class="secbody" ${secClosed("food")?"hidden":""}>
     <div class="card" style="padding:4px 18px">
       ${items.length? items.map(i=>`<div class="item ed" data-edit="f:${i.id}"><div class="nm"><div>${esc(i.name)}</div><div class="small muted">${new Date(i.t).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}${i.src==="ai"?" · estimate":""}</div></div>
         <div class="kc">${fmt(i.kcal)}</div><button class="x" data-del="${i.id}" aria-label="Remove">×</button></div>`).join("")
       : `<p class="muted center" style="padding:18px 0">Nothing yet. Add your first meal above.</p>`}
     </div>${items.length?`<div class="small muted" style="margin:6px 4px 0">Tap an item to change it.</div>`:""}
 
+    </div>
 `;
   const MOVE = `
-    <h2>Movement today</h2>
+    ${secHead("move","Movement today", (()=>{ const parts=[]; if(ex.length) parts.push(`${ex.length} exercise${ex.length===1?"":"s"}`); if(hasWatch(today)) parts.push("Watch"); else if(sb.steps) parts.push(`${fmt(sb.steps)} steps`); return (parts.length?parts.join(" · ")+" · ":"")+`+${fmt(earned())}`; })())}
+    <div class="secbody" ${secClosed("move")?"hidden":""}>
     <div class="card" style="padding:4px 18px">
       ${hasWatch(today) ? `<div class="item"><div class="nm"><div>Apple Watch</div><div class="small muted">Active calories${today.activeAt?` · updated ${new Date(today.activeAt).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}`:""}${sb.steps?`<br>${fmt(sb.steps)} steps`:""}</div></div><div class="kc">+${fmt(today.active)}</div></div>`
         : profile.watch ? `<div class="item"><div class="nm"><div>Apple Watch</div><div class="small muted">Waiting for today's calories from your Watch${sb.steps?`<br>Using ${fmt(sb.steps)} steps until then`:""}</div></div><button class="chip" id="linksteps">Set up</button></div>`
@@ -519,6 +532,7 @@ function showToday(){
         <div class="kc" style="${e.onWatch&&hasWatch(today)?"opacity:.4":""}">+${fmt(e.kcal)}</div><button class="x" data-delex="${e.id}" aria-label="Remove">×</button></div>`).join("")}
     </div>${ex.length?`<div class="small muted" style="margin:6px 4px 0">Tap an item to change it.</div>`:""}${exPct()<100?`<div class="small muted" style="margin:4px 4px 0">Counting ${exPct()}% of these towards your allowance (Settings).</div>`:""}
 
+    </div>
 `;
   app.innerHTML = `
     <div class="top"><div><h1>Today</h1><div class="muted small">${new Date().toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long"})}</div></div>
@@ -549,6 +563,9 @@ function showToday(){
   if($("#cam")) $("#cam").onclick = () => $("#photo").click();
   $("#settings").onclick = showSettings;
   if($("#addw")) $("#addw").onclick = showWeight;
+  app.querySelectorAll("h2.tog").forEach(h=>h.onclick=()=>{ const k=h.dataset.sec; secState[k]=!secClosed(k);
+    try{ localStorage.setItem("sc_sections", JSON.stringify(secState)); }catch(e){}
+    const body=h.nextElementSibling; body.hidden=secState[k]; h.querySelector(".chev").textContent=secState[k]?"▸":"▾"; h.setAttribute("aria-expanded", !secState[k]); });
   const ckDone = async(t)=>{ if(t) profile.target=t; profile.lastCheckin=dkey(); await store.set("profile",profile); showToday(); };
   if($("#ckok")) $("#ckok").onclick = ()=>ckDone();
   if($("#ckkeep")) $("#ckkeep").onclick = ()=>ckDone();
