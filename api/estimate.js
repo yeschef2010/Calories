@@ -41,7 +41,7 @@ export default async function handler(req, res) {
   if (m && !isEx) content.push({ type: "image", source: { type: "base64", media_type: m[1], data: m[2] } });
   content.push({ type: "text", text: isEx
     ? `${EX_PROMPT(kg)}\n\nWhat they did: ${String(text).slice(0, 300)}`
-    : `${PROMPT}\n\nWhat they ate: ${String(text).slice(0, 500) || "(see photo)"}` });
+    : `${PROMPT}\n\nWhat they ate: ${String(text).slice(0, 1500) || "(see photo)"}` });
 
   try {
     const r = await fetch("https://api.anthropic.com/v1/messages", {

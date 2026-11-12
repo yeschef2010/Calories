@@ -83,6 +83,10 @@
   .checkin p{line-height:1.45;margin-bottom:10px}
   .chk{display:flex;gap:8px;align-items:flex-start;margin-top:12px;font-size:15px;line-height:1.35}
   .chk input{width:20px;height:20px;margin-top:1px;accent-color:var(--accent);flex:none}
+  .fixrow{display:flex;gap:8px;margin-top:12px}
+  .fixrow input{flex:1;min-width:0;font-size:15px;padding:11px 12px}
+  .fixrow .btn{width:auto;padding:11px 16px;font-size:15px}
+  #ereai .spin{width:16px;height:16px;border-width:2px;margin-right:8px}
   .est.exc{border-color:var(--accent)}
   .addbar{display:flex;gap:8px;background:#fff;border-radius:16px;padding:6px;box-shadow:0 1px 0 var(--line)}
   .addbar input{border:0;padding:12px 10px}
@@ -561,7 +565,7 @@ function showToday(){
 
 async function addItems(list){
   const now=Date.now();
-  list.forEach(x=>today.items.push({id:uid(), name:x.name, kcal:Math.round(+x.kcal||0), t:now, src:x.src||"manual"}));
+  list.forEach(x=>today.items.push({id:uid(), name:x.name, kcal:Math.round(+x.kcal||0), t:now, src:x.src||"manual", ...(x.portion?{portion:x.portion}:{}), ...(x.meal?{meal:x.meal}:{})}));
   pending=null; await saveToday(); showToday();
 }
 async function addExercise(list){
@@ -635,24 +639,46 @@ function handleText(v){
   estimate({text:v});
 }
 
-async function estimate({text, image, kind="food"}){
-  pending = {kind, loading:true, text, image, imgURL: image? URL.createObjectURL(image):null, items:[], mult:1};
-  renderPending();
+// One call to the server. image can be a Blob or a data: URL.
+async function aiEstimate({text, image, kind="food"}){
+  const img = image ? (typeof image==="string" ? image : await toDataURL(image)) : null;
+  const res = await fetch("/api/estimate", {method:"POST",
+    headers:{"content-type":"application/json","x-access":getCode()},
+    body: JSON.stringify({text, mode: kind==="ex"?"exercise":"food", weightKg: Math.round(profile.weightKg), image: img})});
+  const j = await res.json().catch(()=>({}));
+  if(res.status===403) throw {needCode:true};
+  if(!res.ok) throw {message:j.message};
+  return { items:(j.items||[]).filter(i=>i&&i.name).map(i=>({name:String(i.name), kcal:Math.round(+i.kcal||0), portion:i.portion||i.detail||"", detail:i.detail||i.portion||"", src:"ai"})), note:j.note||"" };
+}
+// Small copy of a meal photo, kept until midnight so items can be re-estimated later.
+async function smallPhoto(blob){
   try{
-    const res = await fetch("/api/estimate", {method:"POST",
-      headers:{"content-type":"application/json","x-access":getCode()},
-      body: JSON.stringify({text, mode: kind==="ex"?"exercise":"food", weightKg: Math.round(profile.weightKg), image: image? await toDataURL(image) : null})});
-    const j = await res.json().catch(()=>({}));
-    if(res.status===403){ pending.loading=false; pending.needCode=true; renderPending(); return; }
-    if(!res.ok) throw {message:j.message};
-    pending.items = (j.items||[]).filter(i=>i&&i.name).map(i=>({name:String(i.name), kcal:Math.round(+i.kcal||0), portion:i.portion||i.detail||"", detail:i.detail||i.portion||"", src:"ai"}));
-    pending.note = j.note||"";
-    pending.loading=false;
+    const img = await createImageBitmap(blob), sc = Math.min(1, 512/Math.max(img.width,img.height));
+    const c = document.createElement("canvas"); c.width=Math.round(img.width*sc); c.height=Math.round(img.height*sc);
+    c.getContext("2d").drawImage(img,0,0,c.width,c.height);
+    return c.toDataURL("image/jpeg", 0.7);
+  }catch(e){ return null; }
+}
+const itemsText = list => list.map(i=>`${i.name}${i.portion?` (${i.portion})`:""} ${Math.round(i.kcal)} kcal`).join("; ");
+
+async function estimate({text, image, kind="food", fix=null, keep=null}){
+  const prev = keep || {};
+  pending = {kind, loading:true, text, image, imgURL: image? URL.createObjectURL(image):null, items:[], mult:1,
+             meal: prev.meal || `${dkey()}-${uid().slice(0,8)}`, photo: prev.photo || null};
+  renderPending();
+  if(image && !pending.photo && kind==="food") pending.photo = await smallPhoto(image);
+  let ask = text;
+  if(fix) ask = `${text || "(see photo)"}\n\nA first estimate gave: ${itemsText(fix.items)}.\nThe person says this is wrong: "${fix.note}".\nTake the correction into account and give the full corrected list of everything in the meal.`;
+  try{
+    const r = await aiEstimate({text:ask, image, kind});
+    pending.items = r.items; pending.note = r.note; pending.loading=false;
     if(!pending.items.length) pending.error = pending.note || (kind==="ex"? "Couldn't work out that exercise." : "Couldn't find any food in that.");
   }catch(e){
     pending.loading=false;
+    if(e && e.needCode){ pending.needCode=true; renderPending(); return; }
     pending.error = (e&&e.message) || "Couldn't get an estimate. Check your connection, or type a number, e.g. “pasta 600”.";
-    if(text) pending.items=[{name:text, kcal:0, portion:"", src:"manual"}];
+    if(fix) pending.items = fix.items;
+    else if(text) pending.items=[{name:text, kcal:0, portion:"", src:"manual"}];
   }
   renderPending();
 }
@@ -674,6 +700,7 @@ function pendingHTML(){
     ${!isEx?`<div class="row" style="justify-content:space-between;margin-top:10px"><span class="small muted">Portion</span>
       <div class="seg sm" id="mult">${[[0.5,"½×"],[1,"1×"],[1.5,"1½×"],[2,"2×"]].map(([v,t])=>`<button data-v="${v}" class="${p.mult===v?"on":""}">${t}</button>`).join("")}</div></div>`:""}
     ${p.note?`<div class="small muted" style="margin-top:10px">${esc(p.note)}</div>`:""}
+    <div class="fixrow"><input type="text" id="fix" placeholder="Not quite right? e.g. “it's noodles, not rice”" enterkeyhint="go"><button class="btn light" id="fixgo">Fix</button></div>
     ${isEx && profile.watch?`<label class="chk"><input type="checkbox" id="onw" ${p.onWatch!==false?"checked":""}> Also recorded on my Apple Watch <span class="muted small">(so it isn't counted twice)</span></label>`:""}
     <div class="row" style="margin-top:14px"><button class="btn light grow" id="pcancel">Cancel</button><button class="btn grow" id="padd">${isEx?"Add +":"Add "}${fmt(tot)}</button></div>`
     :`<button class="btn light" id="pcancel" style="margin-top:6px">OK</button>`}
@@ -683,7 +710,7 @@ function renderPending(){ const el=$("#pending"); if(!el) return; el.innerHTML=p
 function wirePending(){
   const p=pending; if(!p||p.loading) return;
   if(p.needCode){ $("#pcancel").onclick=()=>{ pending=null; renderPending(); };
-    $("#codego").onclick=()=>{ const c=$("#code").value.trim(); if(c){ setCode(c); estimate({text:p.text, image:p.image, kind:p.kind}); } }; return; }
+    $("#codego").onclick=()=>{ const c=$("#code").value.trim(); if(c){ setCode(c); estimate({text:p.text, image:p.image, kind:p.kind, keep:{meal:p.meal, photo:p.photo}}); } }; return; }
   const isEx=p.kind==="ex";
   app.querySelectorAll(".est input[data-k]").forEach(inp=>inp.oninput=()=>{ p.items[+inp.dataset.k].kcal=+inp.value||0;
     const tot=p.items.reduce((s,i)=>s+(+i.kcal||0),0)*p.mult; const b=$("#padd"); if(b) b.textContent=(isEx?"Add +":"Add ")+fmt(tot); });
@@ -691,12 +718,19 @@ function wirePending(){
   if($("#mult")) $("#mult").onclick=e=>{ const b=e.target.closest("button"); if(!b) return; p.mult=+b.dataset.v; renderPending(); };
   if($("#pcancel")) $("#pcancel").onclick=()=>{ pending=null; renderPending(); };
   if($("#onw")) $("#onw").onchange=e=>{ p.onWatch=e.target.checked; };
+  const doFix=()=>{ const n=$("#fix").value.trim(); if(!n) return; $("#fix").blur();
+    estimate({text:p.text, image:p.image, kind:p.kind, fix:{items:p.items, note:n}, keep:{meal:p.meal, photo:p.photo}}); };
+  if($("#fixgo")) $("#fixgo").onclick=doFix;
+  if($("#fix")) $("#fix").onkeydown=e=>{ if(e.key==="Enter"){ e.preventDefault(); doFix(); } };
   if($("#padd")) $("#padd").onclick=()=>{
     const list=p.items.filter(i=>+i.kcal>0);
     if(!list.length) return;
     $("#food").value="";
     if(isEx){ const ow = profile.watch && (!$("#onw") || $("#onw").checked); addExercise(list.map(i=>({...i, onWatch:ow}))); }
-    else addItems(list.map(i=>({name:i.name+(p.mult!==1?` (${p.mult}×)`:""), kcal:i.kcal*p.mult, src:i.src})));
+    else {
+      if(p.photo && p.meal) store.set("photo-"+p.meal, {d:p.photo});
+      addItems(list.map(i=>({name:i.name+(p.mult!==1?` (${p.mult}×)`:""), kcal:i.kcal*p.mult, src:i.src, portion:i.portion||"", meal:p.meal})));
+    }
   };
 }
 
@@ -704,7 +738,9 @@ function editItem(isEx, id){
   const list = isEx ? today.exercise : today.items;
   const it = list.find(x=>x.id===id); if(!it) return;
   const s=sheet(`<h1 style="font-size:26px">Edit ${isEx?"exercise":"food"}</h1>
-    <div><label class="f">Name</label><input type="text" id="en" value="${esc(it.name)}"></div>
+    <div><label class="f">Name</label><input type="text" id="en" value="${esc(it.name)}">
+      ${!isEx?`<div class="small muted" style="margin-top:6px" id="eport">${it.portion?esc(it.portion)+" · ":""}Change the name if it's wrong, then tap Re-estimate.</div>`:""}</div>
+    ${!isEx?`<button class="btn light" id="ereai">Re-estimate with AI</button>`:""}
     ${isEx?`<div><label class="f">Details <span class="muted small">(optional)</span></label><input type="text" id="ed" value="${esc(it.detail||"")}" placeholder="e.g. 8 km · 30 min"></div>`:""}
     ${isEx && profile.watch?`<label class="chk"><input type="checkbox" id="eow" ${it.onWatch?"checked":""}> Also recorded on my Apple Watch</label>`:""}
     <div><label class="f">Calories ${isEx?"burned":""}</label><input type="number" inputmode="numeric" id="ek" value="${Math.round(+it.kcal||0)}"></div>
@@ -715,11 +751,36 @@ function editItem(isEx, id){
   if(s.querySelector("#em")) s.querySelector("#em").onclick=e=>{ const b=e.target.closest("button"); if(!b) return;
     const k=s.querySelector("#ek"); k.value=Math.round((+k.value||0)*(+b.dataset.v)); };
   s.querySelector("#ecancel").onclick=close;
+  let reai = null;   // result of a re-estimate, applied on Save
+  if(s.querySelector("#ereai")) s.querySelector("#ereai").onclick=async e=>{
+    const btn=e.currentTarget, name=s.querySelector("#en").value.trim(); if(!name) return;
+    btn.disabled=true; btn.innerHTML='<span class="spin"></span>Looking again…';
+    const others = today.items.filter(x=>x!==it && it.meal && x.meal===it.meal);
+    const photo = it.meal ? (await store.get("photo-"+it.meal))?.d : null;
+    const ask = `Estimate ONE item only: "${name}".${others.length?` It is part of a meal that also contained: ${itemsText(others)}.`:""}`
+      + ` It was first logged as "${it.name}"${it.portion?` (${it.portion})`:""} at ${Math.round(it.kcal)} kcal, but that was wrong about what the food is.`
+      + `${photo?" Look at the photo again for the portion.":" Use that portion size as a guide unless the new name says otherwise."} Return a single item.`;
+    try{
+      const r = await aiEstimate({text:ask, image:photo});
+      const kcal = r.items.reduce((a,i)=>a+i.kcal,0);
+      if(!kcal) throw {message:r.note||"Couldn't estimate that."};
+      reai = {kcal, portion:r.items[0].portion||""};
+      s.querySelector("#ek").value = kcal;
+      s.querySelector("#eport").textContent = `New estimate: ${reai.portion?reai.portion+" · ":""}${fmt(kcal)} kcal (was ${fmt(it.kcal)}). Tap Save to keep it.`;
+      btn.innerHTML="Re-estimate again";
+    }catch(err){
+      if(err && err.needCode){ s.querySelector("#eport").textContent="Run one estimate from the main screen first so it can ask for your invite code."; }
+      else s.querySelector("#eport").textContent = (err&&err.message) || "Couldn't reach the AI. Check your connection.";
+      btn.innerHTML="Re-estimate with AI";
+    }
+    btn.disabled=false;
+  };
   s.querySelector("#edel").onclick=async()=>{ list.splice(list.indexOf(it),1); close(); await saveToday(); showToday(); };
   s.querySelector("#esave").onclick=async()=>{
     const name=s.querySelector("#en").value.trim(), kcal=Math.round(+s.querySelector("#ek").value);
     if(!name || !(kcal>=0)) return;
-    if(kcal!==Math.round(+it.kcal||0)) it.src="manual";
+    if(reai && kcal===reai.kcal){ it.src="ai"; it.portion=reai.portion; }
+    else if(kcal!==Math.round(+it.kcal||0)) it.src="manual";
     it.name=name; it.kcal=kcal;
     if(isEx){ const d=s.querySelector("#ed").value.trim(); if(d!==(it.detail||"")){ it.detail=d; } const ow=s.querySelector("#eow"); if(ow) it.onWatch=ow.checked; }
     close(); await saveToday(); showToday();
@@ -876,6 +937,7 @@ function showStepsHelp(){
   weights = (await store.get("weights"))?.list || [];
   const k = dkey();
   today = allDays[k] || {date:k, items:[]};
+  try{ for(let i=localStorage.length-1;i>=0;i--){ const key=localStorage.key(i); if(key && key.startsWith("sc_photo-") && !key.startsWith("sc_photo-"+k)) localStorage.removeItem(key); } }catch(e){}
   today.items ||= []; today.exercise ||= []; today.date = k;
   // Steps arrive from the iPhone Shortcut as ?steps=8423
   try{
